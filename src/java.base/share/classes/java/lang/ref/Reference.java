@@ -160,6 +160,9 @@ public abstract class Reference<T> {
      *        dequeued: ReferenceQueue.NULL
      *    unregistered: ReferenceQueue.NULL
      */
+    // 开始指向全局 ReferenceQueue
+    // 当 Reference 从 pendinglist 中入队之后，queue 这里就表示状态了，会被设置为 ENQUEUE 表示入队状态
+    // 当 Reference 从 ReferenceQueue 中出去之后，queue 被设置为 NULL 表示出队状态（已经处理完）
     volatile ReferenceQueue<? super T> queue;
 
     /* The link in a ReferenceQueue's list of Reference objects.
@@ -236,6 +239,10 @@ public abstract class Reference<T> {
      * Enqueue a Reference taken from the pending list.  Calling this method
      * takes us from the Reference<?> domain of the pending list elements to
      * having a Reference<T> with a correspondingly typed queue.
+     * 这里不会调用 clear, 但是 public 方法 enqueue() 会调用 clear 方法
+     * referent = null ,那么该 Reference 对象就是 inactive
+     *
+     * 这里的入队操作不会将 Reference 变为 inactive
      */
     private void enqueueFromPending() {
         var q = queue;
@@ -243,6 +250,8 @@ public abstract class Reference<T> {
     }
 
     private static final Object processPendingLock = new Object();
+    // processPendingActive 的相关操作都会在 synchronized 块中进行，JMM 保证可见性
+    // 所以不需要 volatile
     private static boolean processPendingActive = false;
 
     private static void processPendingReferences() {
@@ -267,6 +276,8 @@ public abstract class Reference<T> {
                 // This improves latency for nio.Bits waiters, which
                 // are the only important ones.
                 synchronized (processPendingLock) {
+                    // 释放了一个就赶快通知，说不定释放的这个 cleaner 恰好可以满足其他线程的 direct memory 申请，让其他线程尽快运行
+                    // 其他线程在申请 direct memory 的时候，如果容量不够会在 Bits.reversememory 中等待 processPendingLock
                     processPendingLock.notifyAll();
                 }
             } else {
@@ -289,12 +300,22 @@ public abstract class Reference<T> {
     private static boolean waitForReferenceProcessing()
         throws InterruptedException
     {
+        // wait() , notify(), notifyAll() 必须要在 synchronized 中调用，防止多线执行乱序
+        // 如果没有 synchronized，那么可能出现的乱序情况是
+        // 1. if 条件为 true
+        // 2. ReferenceHandler 线程执行 notifyAll
+        // 3. 当前线程执行 wait,当前线程永远不会被唤醒了
         synchronized (processPendingLock) {
+            // 检查 ReferenceHandler 线程是否正在处理准备回收的 Reference 对象
+            // 或者 JVM 中的 _reference_pending_list 是否包含待处理的 Reference 对象
             if (processPendingActive || hasReferencePendingList()) {
                 // Wait for progress, not necessarily completion.
+                // 如果当前系统中还有待处理的 Reference 对象，那么 Java 线程就在这里等待一下
+                // 等待 ReferenceHandler 线程去调用 Cleaner 释放 native memory
                 processPendingLock.wait();
                 return true;
             } else {
+                // 如果当前系统中没有待处理的 Reference 对象，那么就直接返回 false
                 return false;
             }
         }
@@ -302,6 +323,7 @@ public abstract class Reference<T> {
 
     static {
         ThreadGroup tg = Thread.currentThread().getThreadGroup();
+        // 获取 system thread group
         for (ThreadGroup tgn = tg;
              tgn != null;
              tg = tgn, tgn = tg.getParent());
@@ -386,7 +408,8 @@ public abstract class Reference<T> {
      * assignment of the referent field won't do for some garbage
      * collectors.
      */
-    private native void clear0();
+
+    private native void clear0(); // referent 置为 null 变为 inactive
 
     /* -- Operations on inactive FinalReferences -- */
 
@@ -463,7 +486,12 @@ public abstract class Reference<T> {
      * @return   {@code true} if this reference object was successfully
      *           enqueued; {@code false} if it was already enqueued or if
      *           it was not registered with a queue when it was created
+     *
      */
+    // 这个方法只能被应用程序调用，当应用程序调用该方法之后，Reference 就会被应用程序加入到 ReferecneQueue 中
+    // 这样一来，gc 线程就不用重复将该 Reference 添加到 pennding list 中了。
+    // 因为后续还会被 ReferenceHandler 线程重复添加到 ReferenceQueue 中
+    // JVM 遇到已经被 clear 过的 Reference,则不会将其添加到 pendding list 中
     public boolean enqueue() {
         clear0();               // Intentionally clear0() rather than clear()
         return this.queue.enqueue(this);

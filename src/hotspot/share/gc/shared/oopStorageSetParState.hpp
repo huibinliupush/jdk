@@ -53,7 +53,7 @@ private:
 
 // Set of strong parallel states.
 template<bool concurrent, bool is_const>
-class OopStorageSetStrongParState
+class   OopStorageSetStrongParState
   : public OopStorageSetParState<OopStorageSet::StrongId, concurrent, is_const>
 {
 public:

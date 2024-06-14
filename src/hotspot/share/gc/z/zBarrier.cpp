@@ -68,15 +68,20 @@ bool ZBarrier::should_mark_through(uintptr_t addr) {
 template <bool gc_thread, bool follow, bool finalizable, bool publish>
 uintptr_t ZBarrier::mark(uintptr_t addr) {
   uintptr_t good_addr;
-
+  // 标记新分配的对象，因为标记阶段是并发的，标记阶段应用程序分配的对象视图为 mark0
+  // 新分配的对象地址视图是对的，但是还未被标记，所以新对象也需要进入到标记栈中
   if (ZAddress::is_marked(addr)) {
     // Already marked, but try to mark though anyway
     good_addr = ZAddress::good(addr);
   } else if (ZAddress::is_remapped(addr)) {
     // Already remapped, but also needs to be marked
+    // 对象的原始视图为 remap , 此时是标记阶段，需要转换对象视图，并对对象进行标记
     good_addr = ZAddress::good(addr);
   } else {
     // Needs to be both remapped and marked
+    // 此时对象视图为 Mark1 ,也就是重标记阶段，上一个 gc 周期没有调整过来的对象视图
+    // 在本次 gc 的标记阶段需要调整对象视图（forward talbe）中取出对象的新地址
+    // 然后把新地址转换为 good 返回
     good_addr = remap(addr);
   }
 

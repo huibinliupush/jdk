@@ -38,7 +38,7 @@ ZPage::ZPage(uint8_t type, const ZVirtualMemory& vmem, const ZPhysicalMemory& pm
     _seqnum(0),
     _virtual(vmem),
     _top(start()),
-    _livemap(object_max_count()),
+    _livemap(object_max_count()), // zpage 中所能容纳的最大对象个数
     _last_used(0),
     _physical(pmem),
     _node() {

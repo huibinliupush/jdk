@@ -42,8 +42,8 @@ const char*       ZGlobalPhaseToString();
 extern uint32_t   ZGlobalSeqNum;
 
 // Granule shift/size
-const size_t      ZGranuleSizeShift             = ZPlatformGranuleSizeShift;
-const size_t      ZGranuleSize                  = (size_t)1 << ZGranuleSizeShift;
+const size_t      ZGranuleSizeShift             = ZPlatformGranuleSizeShift; // 21 定义在 zGlobals_x86.hpp
+const size_t      ZGranuleSize                  = (size_t)1 << ZGranuleSizeShift; // 2M
 
 // Number of heap views
 const size_t      ZHeapViews                    = ZPlatformHeapViews;
@@ -61,21 +61,30 @@ const size_t      ZPageSizeSmallShift           = ZGranuleSizeShift;
 extern size_t     ZPageSizeMediumShift;
 
 // Page sizes
-const size_t      ZPageSizeSmall                = (size_t)1 << ZPageSizeSmallShift;
+// 2M
+const size_t      ZPageSizeSmall                = (size_t)1 << ZPageSizeSmallShift; // 2M
+// 32M
 extern size_t     ZPageSizeMedium;
 
 // Object size limits
+// 2M / 8 = 256K , small page 中最大允许的对象size为256K
 const size_t      ZObjectSizeLimitSmall         = ZPageSizeSmall / 8; // 12.5% max waste
+//  计算方式见 ZHeuristics::set_medium_page_size()
+// 32M / 8 = 4M ,Medium page 中最大允许的对象 size 为 4M
 extern size_t     ZObjectSizeLimitMedium;
 
 // Object alignment shifts
+// 8 字节
 extern const int& ZObjectAlignmentSmallShift;
-extern int        ZObjectAlignmentMediumShift;
+// 4K
+extern int        ZObjectAlignmentMediumShift; // ZHeuristics::set_medium_page_size()
+// 2M
 const int         ZObjectAlignmentLargeShift    = ZGranuleSizeShift;
 
 // Object alignments
 extern const int& ZObjectAlignmentSmall;
 extern int        ZObjectAlignmentMedium;
+// 见 ZObjectAllocator::alloc_large_object
 const int         ZObjectAlignmentLarge         = 1 << ZObjectAlignmentLargeShift;
 
 //

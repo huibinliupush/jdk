@@ -39,6 +39,8 @@ inline bool ZAddress::is_bad(uintptr_t value) {
   return value & ZAddressBadMask;
 }
 
+// goodMask = ZAddressMetadataMarked
+// ZAddressBadMask = !goodMask
 inline bool ZAddress::is_good(uintptr_t value) {
   return !is_bad(value) && !is_null(value);
 }

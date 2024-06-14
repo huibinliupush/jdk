@@ -237,6 +237,7 @@ void ZHeap::mark_start() {
   ZGlobalPhase = ZPhaseMark;
 
   // Reset marking information and mark roots
+  // 设置 nstripes 个数，与 worker 线程一比一映射
   _mark.start();
 
   // Update statistics

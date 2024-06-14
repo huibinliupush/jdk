@@ -176,6 +176,7 @@ void vmClasses::resolve_all(TRAPS) {
 
   // Preload ref klasses and set reference types
   vmClasses::Reference_klass()->set_reference_type(REF_OTHER);
+  // https://blog.csdn.net/wave_calmly/article/details/83124878
   InstanceRefKlass::update_nonstatic_oop_maps(vmClasses::Reference_klass());
 
   resolve_through(VM_CLASS_ID(PhantomReference_klass), scan, CHECK);

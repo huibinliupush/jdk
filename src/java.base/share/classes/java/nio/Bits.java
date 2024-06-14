@@ -114,6 +114,7 @@ class Bits {                            // package-private
         }
 
         // optimist!
+        // 首先检查一下 direct memory 的使用量是否已经超过了 -XX:MaxDirectMemorySize 的限制
         if (tryReserveMemory(size, cap)) {
             return;
         }
@@ -128,6 +129,8 @@ class Bits {                            // package-private
             boolean refprocActive;
             do {
                 try {
+                    // refprocActive = true 表示 ReferenceHandler 线程又释放了一些 direct memory
+                    // refprocActive = false 表示当前系统中没有待处理的 Cleaner，direct memory 的容量真的不够了
                     refprocActive = jlra.waitForReferenceProcessing();
                 } catch (InterruptedException e) {
                     // Defer interrupts and keep trying.
@@ -140,6 +143,8 @@ class Bits {                            // package-private
             } while (refprocActive);
 
             // trigger VM's Reference processing
+            // 此时系统中已经没有任何可回收的 direct memory 了
+            // 只能触发 gc，尝试让 JVM 再去回收一些没有任何引用的 directByteBuffer
             System.gc();
 
             // A retry loop with exponential back-off delays.
@@ -157,14 +162,23 @@ class Bits {                            // package-private
                 if (tryReserveMemory(size, cap)) {
                     return;
                 }
+                // 最多睡眠 9 次
                 if (sleeps >= MAX_SLEEPS) {
                     break;
                 }
+                // 等待 ReferenceHandler 线程处理 Cleaner 释放 direct memory （返回 true）
+                // 当前系统中没有任何可回收的 direct memory，则 Thread.sleep 睡眠 (返回 false)
+                // 每次睡眠时间依次递增 ：1, 2, 4, 8, 16, 32, 64, 128, 256 (total 511 ms 约等于 0.5 s)
+                // which means that OOME will be thrown after 0.5 s of trying
                 try {
                     if (!jlra.waitForReferenceProcessing()) {
+                        // 睡眠等待其他线程触发 gc，尝试看看后面几轮 gc 是否能够回收到一点 direct memory
+                        // 最多睡眠 9 次，每次睡眠时间按照 1, 2, 4, 8, 16, 32, 64, 128, 256 ms 依次递增
                         Thread.sleep(sleepTime);
                         sleepTime <<= 1;
                         sleeps++;
+                        // 这里不让当前线程继续触发 System.gc 的目的是，我们刚刚已经触发一轮 GC 了，仍然没有回收到足够的 direct memory
+                        // 那如果再次立即触发 GC ,收效依然不会很大，所以这里选择等待其他线程去触发。
                     }
                 } catch (InterruptedException e) {
                     interrupted = true;
@@ -172,6 +186,7 @@ class Bits {                            // package-private
             }
 
             // no luck
+            // 在尝试回收 direct memory 511 ms 后触发 OOM
             throw new OutOfMemoryError
                 ("Cannot reserve "
                  + size + " bytes of direct buffer memory (allocated: "

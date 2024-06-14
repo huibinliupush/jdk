@@ -1132,6 +1132,7 @@ void InstanceKlass::initialize_impl(TRAPS) {
       if (UsePerfData) {
         ClassLoader::perf_classes_inited()->inc();
       }
+      // 类的初始化，clinit 方法就是在这里执行的
       call_class_initializer(THREAD);
     }
   }

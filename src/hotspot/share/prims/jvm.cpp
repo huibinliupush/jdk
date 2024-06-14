@@ -868,9 +868,9 @@ static jclass jvm_define_class_common(const char *name,
   Handle protection_domain (THREAD, JNIHandles::resolve(pd));
   ClassLoadInfo cl_info(protection_domain);
   Klass* k = SystemDictionary::resolve_from_stream(&st, class_name,
-                                                   class_loader,
-                                                   cl_info,
-                                                   CHECK_NULL);
+                                                       class_loader,
+                                                       cl_info,
+                                                       CHECK_NULL);
 
   if (log_is_enabled(Debug, class, resolve)) {
     trace_class_resolution(k);
@@ -994,6 +994,7 @@ static jclass jvm_lookup_define_class(jclass lookup, const char *name,
          "lookup class and defined class are in different packages");
 
   if (init) {
+      // 类的初始化，clinit 执行
     ik->initialize(CHECK_NULL);
   } else {
     ik->link_class(CHECK_NULL);
@@ -3466,6 +3467,7 @@ jclass find_class_from_class_loader(JNIEnv* env, Symbol* name, jboolean init,
 
   // Check if we should initialize the class
   if (init && klass->is_instance_klass()) {
+      // 类初始化
     klass->initialize(CHECK_NULL);
   }
   return (jclass) JNIHandles::make_local(THREAD, klass->java_mirror());

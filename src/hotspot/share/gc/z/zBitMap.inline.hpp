@@ -35,17 +35,22 @@ inline ZBitMap::ZBitMap(idx_t size_in_bits) :
 
 inline BitMap::bm_word_t ZBitMap::bit_mask_pair(idx_t bit) {
   assert(bit_in_word(bit) < BitsPerWord - 1, "Invalid bit index");
+  //  二进制 11 左移 bitIndex
+  // finalizable 是二进制 1 左移 bitIndex
   return (bm_word_t)3 << bit_in_word(bit);
 }
 
 inline bool ZBitMap::par_set_bit_pair_finalizable(idx_t bit, bool& inc_live) {
+    // 直接设置对应 bit 在 word 中的值，标记为 1
   inc_live = par_set_bit(bit);
   return inc_live;
 }
 
 inline bool ZBitMap::par_set_bit_pair_strong(idx_t bit, bool& inc_live) {
   verify_index(bit);
+  // 获取 bit 对应的 word
   volatile bm_word_t* const addr = word_addr(bit);
+  // 标记位 11
   const bm_word_t pair_mask = bit_mask_pair(bit);
   bm_word_t old_val = *addr;
 

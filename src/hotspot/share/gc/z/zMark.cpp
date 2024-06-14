@@ -116,10 +116,12 @@ void ZMark::start() {
 
   // Set number of mark stripes to use, based on number
   // of workers we will use in the concurrent mark phase.
+  // worker 线程和 stripe 都是一比一对应的
   const size_t nstripes = calculate_nstripes(_nworkers);
   _stripes.set_nstripes(nstripes);
 
   // Update statistics
+  // 设置标记条带 nstripes 个数
   ZStatMark::set_at_mark_start(nstripes);
 
   // Print worker/stripe distribution
@@ -275,6 +277,7 @@ void ZMark::follow_object(oop obj, bool finalizable) {
     obj->oop_iterate(&cl);
   } else {
     ZMarkBarrierOopClosure<false /* finalizable */> cl;
+    // 遍历标记对象的成员变量
     obj->oop_iterate(&cl);
   }
 }
@@ -299,6 +302,9 @@ void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
   assert(page->is_relocatable(), "Invalid page state");
 
   // Mark
+  // 对于根对象来说，之前已经被 gc 线程标记了，所以 mark = false 这里不进行标记，直接标记它的 follow
+  // 对于应用线程并发访问到的对象来说，对象是没有被标记的，只不过是被应用线程先 push 到标记栈中 mark = true
+  // 这里会将对象从标记栈中取出然后进行标记，最后标记他的 follow
   if (mark && !page->mark_object(addr, finalizable, inc_live)) {
     // Already marked
     return;
@@ -311,6 +317,7 @@ void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
     // and alignment paddings can never be reclaimed.
     const size_t size = ZUtils::object_size(addr);
     const size_t aligned_size = align_up(size, page->object_alignment());
+    // 更新对象所在 zpage 的统计信息，比如增加活跃对象个数，以及活跃对象字节数等统计信息
     cache->inc_live(page, aligned_size);
   }
 
@@ -319,6 +326,7 @@ void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
     if (is_array(addr)) {
       follow_array_object(objArrayOop(ZOop::from_address(addr)), finalizable);
     } else {
+        // 遍历对象的成员变量，依次进行标记
       follow_object(ZOop::from_address(addr), finalizable);
     }
   }
@@ -583,10 +591,13 @@ void ZMark::work_with_timeout(ZMarkCache* cache, ZMarkStripe* stripe, ZMarkThrea
 
 void ZMark::work(uint64_t timeout_in_micros) {
   ZMarkCache cache(_stripes.nstripes());
+  // 获取标记线程对应的标记条带
   ZMarkStripe* const stripe = _stripes.stripe_for_worker(_nworkers, ZThread::worker_id());
+  // 获取线程本地标记栈
   ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(Thread::current());
 
   if (timeout_in_micros == 0) {
+    // 并发标记走这里
     work_without_timeout(&cache, stripe, stacks);
   } else {
     work_with_timeout(&cache, stripe, stacks, timeout_in_micros);
@@ -718,6 +729,7 @@ public:
 void ZMark::mark(bool initial) {
   if (initial) {
     ZMarkRootsTask task(this);
+    // worker 同步执行，当任务执行完之后才会返回
     _workers->run(&task);
   }
 

@@ -47,8 +47,11 @@ void ZHeuristics::set_medium_page_size() {
     // Enable medium pages
     ZPageSizeMedium             = size;
     ZPageSizeMediumShift        = log2i_exact(ZPageSizeMedium);
+    // 32M / 8 = 4M
     ZObjectSizeLimitMedium      = ZPageSizeMedium / 8;
+    // 4K
     ZObjectAlignmentMediumShift = (int)ZPageSizeMediumShift - 13;
+    // 4K
     ZObjectAlignmentMedium      = 1 << ZObjectAlignmentMediumShift;
   }
 }

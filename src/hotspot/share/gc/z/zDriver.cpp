@@ -153,7 +153,7 @@ public:
   virtual bool do_operation() {
     ZStatTimer timer(ZPhasePauseMarkStart);
     ZServiceabilityPauseTracer tracer;
-
+    // Increment total number of GC collections
     ZCollectedHeap::heap()->increment_total_collections(true /* full */);
 
     ZHeap::heap()->mark_start();
@@ -161,18 +161,18 @@ public:
   }
 };
 
-class VM_ZMarkEnd : public VM_ZOperation {
-public:
-  virtual VMOp_Type type() const {
-    return VMOp_ZMarkEnd;
-  }
+    class VM_ZMarkEnd : public VM_ZOperation {
+    public:
+      virtual VMOp_Type type() const {
+        return VMOp_ZMarkEnd;
+      }
 
-  virtual bool do_operation() {
-    ZStatTimer timer(ZPhasePauseMarkEnd);
-    ZServiceabilityPauseTracer tracer;
-    return ZHeap::heap()->mark_end();
-  }
-};
+      virtual bool do_operation() {
+        ZStatTimer timer(ZPhasePauseMarkEnd);
+        ZServiceabilityPauseTracer tracer;
+        return ZHeap::heap()->mark_end();
+      }
+    };
 
 class VM_ZRelocateStart : public VM_ZOperation {
 public:
@@ -446,21 +446,33 @@ void ZDriver::gc(const ZDriverRequest& request) {
   ZDriverGCScope scope(request);
 
   // Phase 1: Pause Mark Start
+  // 初始化统计信息，清空 object alocator 的缓存页，切换视图，设置标记条带个数
   pause_mark_start();
 
   // Phase 2: Concurrent Mark
+  // 标记 gc root, 标记普通对象
+  // 经过主动刷新，被动刷新之后，如果标记栈中还有对象，也不会再进行标记了
+  // 剩下的对象标记任务放到 pause_mark_end 中 STW 阶段执行
   concurrent(mark);
 
-  // Phase 3: Pause Mark End
+  // Phase 3: Pause Mark End 再标记阶段，标记上一阶段剩下的对象
+  // zgc 低延迟的精髓，如果 1ms 内结束不了 STW 标记，那么就在发起一轮 concurrent 标记
+  // 目的是降低应用线程的停顿
   while (!pause_mark_end()) {
+    // 1ms 内没有标记完应用线程本地标记栈的内容，那么就重新开始一轮并发标记。
     // Phase 3.5: Concurrent Mark Continue
     concurrent(mark_continue);
   }
 
   // Phase 4: Concurrent Mark Free
+  // 释放标记栈资源
   concurrent(mark_free);
 
   // Phase 5: Concurrent Process Non-Strong References
+  // 虽然这里并发标记阶段已经结束了，但第五阶段仍然是并发执行的
+  // 所以要在这里确定 pannding list 中终态需要在 mark-end 阶段  ZResurrection::block()
+  // Block resurrection of weak/phantom references
+  // call Reference.get()  would incorrectly return null during the resurrection block window,
   concurrent(process_non_strong_references);
 
   // Phase 6: Concurrent Reset Relocation Set
@@ -482,7 +494,7 @@ void ZDriver::gc(const ZDriverRequest& request) {
 void ZDriver::run_service() {
   // Main loop
   while (!should_terminate()) {
-    // Wait for GC request
+    // Wait for GC request， zMessagePort.inline.hpp
     const ZDriverRequest request = _gc_cycle_port.receive();
     if (request.cause() == GCCause::_no_gc) {
       continue;

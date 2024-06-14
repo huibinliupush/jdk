@@ -1572,7 +1572,7 @@ Klass* java_lang_Class::as_Klass_raw(oop java_class) {
 }
 
 
-void java_lang_Class::set_klass(oop java_class, Klass* klass) {
+void java_lang_Class::  set_klass(oop java_class, Klass* klass) {
   assert(java_lang_Class::is_instance(java_class), "must be a Class object");
   java_class->metadata_field_put(_klass_offset, klass);
 }

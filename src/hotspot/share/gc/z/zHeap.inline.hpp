@@ -48,11 +48,12 @@ inline uint32_t ZHeap::hash_oop(uintptr_t addr) const {
   return ZHash::address_to_uint32(offset);
 }
 
+// PhantomReference 判断这里，FinalReference 重新标记符合 referent 标记这里
 inline bool ZHeap::is_object_live(uintptr_t addr) const {
   ZPage* page = _page_table.get(addr);
   return page->is_object_live(addr);
 }
-
+// StrongReference ，WeakReference，SoftReference 判断这里
 inline bool ZHeap::is_object_strongly_live(uintptr_t addr) const {
   ZPage* page = _page_table.get(addr);
   return page->is_object_strongly_live(addr);

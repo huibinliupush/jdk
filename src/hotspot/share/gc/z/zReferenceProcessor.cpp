@@ -132,10 +132,15 @@ bool ZReferenceProcessor::is_inactive(oop reference, oop referent, ReferenceType
   if (type == REF_FINAL) {
     // A FinalReference is inactive if its next field is non-null. An application can't
     // call enqueue() or clear() on a FinalReference.
+    // 在 ReferenceHandler 线程 的 processPendingReferences 方法中
+    // 当从 _reference_pending_list 中将 Reference 对象摘下时，ref.discovered = null
     return reference_next(reference) != NULL;
   } else {
     // A non-FinalReference is inactive if the referent is null. The referent can only
     // be null if the application called Reference.enqueue() or Reference.clear().
+    // 该 reference 已经被应用程序处理过了 Reference.enqueue() or Reference.clear() 这里就不用重复添加到 discoverlist 中了
+    // Reference 类中的 enqueue() 和 clear() 都会调用 native 方法 clear0 将 referent 置为 null
+    // ThreadLocal 中的 remove 方法会调用 clear() 方法
     return referent == NULL;
   }
 }
@@ -159,16 +164,28 @@ bool ZReferenceProcessor::is_softly_live(oop reference, ReferenceType type) cons
 
 bool ZReferenceProcessor::should_discover(oop reference, ReferenceType type) const {
   volatile oop* const referent_addr = reference_referent_addr(reference);
+    // 调整 referent 对象的视图为 remapped + mark0 也就是 weakgood 视图
+    // 表示该 referent 对象目前只能通过弱引用链访问到，而不能通过强引用链访问到
+    // 注意这里是调整 referent 的视图 而不是调整 reference 的视图
   const oop referent = ZBarrier::weak_load_barrier_on_oop_field(referent_addr);
-
+  // A non-FinalReference is inactive if the referent is null
+  // 为什么 inactive 的 reference 不能被放到 discoverlist 中呢 ？
+  // 其实是为了避免 reference 被重复放到 discoverlist 中被重复处理
+  // 第一次 gc 的时候走到这里只是并发标记阶段，所以 referent 还没有被 gc 设置为 null
+  // 后面处理 none strong 引用的时候会将这个 reference 方法 penndinglist 中 第一次 gc 结束
+  // 非 gc 阶段，jdk 中的 ReferenceHandler 线程会处理 penndinglist 中的 reference
+  // 当我们在应用程序中调用了 Reference.enqueue() or Reference.clear() 的时候，reference 就变成 inactive
+  // inactive 的 reference 表示我们已经处理过了，（但这个 reference 可能还被其他 gc root 引用）
+  // 在第二次 gc 的时候无论这个 reference 存活与否，这里都不会将这个 reference 放到 discoverlist 中了防止被重复处理
   if (is_inactive(reference, referent, type)) {
     return false;
   }
-
+  // referent 还被强引用关联，那么 return false 也就是说不能被加入到 discover list 中
+  // 是否是 gc 之后新申请的对象，是否被  _livemap.get(index + 1) 标记过
   if (is_strongly_live(referent)) {
     return false;
   }
-
+  // referent 还被软引用有效关联，那么 return false 也就是说不能被加入到 discover list 中
   if (is_softly_live(reference, type)) {
     return false;
   }
@@ -190,12 +207,25 @@ bool ZReferenceProcessor::should_drop(oop reference, ReferenceType type) const {
     // should drop the reference.
     return true;
   }
-
+  // 注意每个 reference 关联的 ReferenceQueue 不一样。FinalReference 完全由 JVM 处理对用户不可见
+  // 其他 Reference 类型可由用户自主决定
+  // FinalReference 和 PhantomReference 用的是 zlivemap 中同一个标记位
+  // 标记他们的 referent 的时候在 zlivemap 中用的是同一个标记位
   // Check if the referent is still alive, in which case we should
   // drop the reference.
   if (type == REF_PHANTOM) {
+      // 如果 referent 因为 FinalReference 被标记 live，那么 PhantomReference 这里会返回 true
+      // 本轮 gc 会把 PhantomReference drop 掉，等到执行完 referent 的 finaliser 方法
+      // 下一轮 gc 再来处理 PhantomReference
     return ZBarrier::is_alive_barrier_on_phantom_oop(referent);
   } else {
+      // StrongReference ，WeakReference，SoftReference 在 zlivemap 中用的一个标记位
+
+      // 所以一个对象在 zlivemap 中用两位标记，一位用于表示 referent 对象是否是 FinalReference，PhantomReference 可达
+      // 另一位表示 referent 对象是否是强可达，（StrongReference ，WeakReference，SoftReference）判断的同一位
+      // 只要不是强可达，无论 referent 是不是因为 FinalReference 重新被标记，WeakReference 不管，都会加入 padding list
+      // 即使 referent 因为 FinalReference 被标记 live，那么 WeakReference ,SoftReference 都会返回 false
+      // 和 FinalReference 一起将在本轮 gc 中被处理，FinalReference 先被处理，WeakReference 和 SoftReference 后被处理
     return ZBarrier::is_alive_barrier_on_weak_oop(referent);
   }
 }
@@ -234,17 +264,27 @@ void ZReferenceProcessor::discover(oop reference, ReferenceType type) {
     // the problem of later having to mark those objects if the referent is
     // still final reachable during processing.
     volatile oop* const referent_addr = reference_referent_addr(reference);
+    // 如果是 FinalReference 那么就需要对 referent 进行标记，视图改为 finalizable 表示只能通过 finaliz 方法才能访问到 referent 对象
+    // 因为 referent 后续需要通过 finalizable 方法被访问，所以这里需要对它进行标记，不能回收
     ZBarrier::mark_barrier_on_oop_field(referent_addr, true /* finalizable */);
   }
 
   // Add reference to discovered list
+  // 确保 reference 不在 _discovered_list 中，不能重复添加
   assert(reference_discovered(reference) == NULL, "Already discovered");
   oop* const list = _discovered_list.addr();
+  // 头插法，reference->discovered = *list
   reference_set_discovered(reference, *list);
+  // reference 变为 _discovered_list 的头部
   *list = reference;
 }
 
 bool ZReferenceProcessor::discover_reference(oop reference, ReferenceType type) {
+  // 定义在 globals.hpp
+  // 默认为 true，Tell whether the VM should register soft/weak/final/phantom
+  // develop flags are settable / visible only during development and are constant in the PRODUCT version
+  // -XX:+RegisterReferences -- develop flags 表示是否开启 Referenced 的处理
+  // 和 ReferenceQueue 关联与否没关系
   if (!RegisterReferences) {
     // Reference processing disabled
     return false;
@@ -254,12 +294,15 @@ bool ZReferenceProcessor::discover_reference(oop reference, ReferenceType type) 
 
   // Update statistics
   _encountered_count.get()[type]++;
-
+  // true : 表示 referent 还存活（被强引用或者软引用关联），那么就不能放到 _discovered_list
+  // false ： 表示 referent 不在存活，那么就需要把 reference 放入 _discovered_list
   if (!should_discover(reference, type)) {
     // Not discovered
     return false;
   }
-
+    // 将 reference 插入到  _discovered_list 中（头插法）
+    // 如果 reference 是一个 FinalReference ，那么还需要对其 referent 进行标记，本轮 gc 不能回收 referent
+    // 因为 referent 需要保证在  finalizable 方法中被访问到
   discover(reference, type);
 
   // Discovered
@@ -285,6 +328,7 @@ oop* ZReferenceProcessor::keep(oop reference, ReferenceType type) {
   _enqueued_count.get()[type]++;
 
   // Make reference inactive
+  // referent 置为 null
   make_inactive(reference, type);
 
   // Return next in list
@@ -293,22 +337,30 @@ oop* ZReferenceProcessor::keep(oop reference, ReferenceType type) {
 
 void ZReferenceProcessor::work() {
   // Process discovered references
+  // ZPerWork 类型的 addr 获取的是链表的头地址
   oop* const list = _discovered_list.addr();
   oop* p = list;
 
   while (*p != NULL) {
     const oop reference = *p;
     const ReferenceType type = reference_type(reference);
-
+    // 如果该 reference 已经被应用程序处理过了 -> referent == NULL, 那么就不需要再被处理了，直接丢弃
+    // 如果 referent 依然存活，那么也要丢弃，不能放入 _discovered_list 中
     if (should_drop(reference, type)) {
+        // 如果 referent 是活跃的，则重新标记 referent 对象
+        // 并将 reference 从 _discovered_list 中删除
       *p = drop(reference, type);
     } else {
+        // 这里会调用 reference 的 clear 方法 -> referent 置为 null
+        // 返回 reference 在 _discovered_list 中的下一个对象
       p = keep(reference, type);
     }
   }
 
-  // Prepend discovered references to internal pending list
+  // Prepend discovered references to internal pending list（尾插法）
   if (*list != NULL) {
+      // _pending_list.addr() 获取 _pending_list 的尾部地址（ZContend 类型 addr 的获取）
+      // Atomic::xchg 替换成功，返回原来的内容
     *p = Atomic::xchg(_pending_list.addr(), *list);
     if (*p == NULL) {
       // First to prepend to list, record tail
@@ -425,6 +477,7 @@ void ZReferenceProcessor::process_references() {
 
   // Process discovered lists
   ZReferenceProcessorTask task(this);
+  // gc _workers 一起运行 ZReferenceProcessorTask
   _workers->run(&task);
 
   // Update SoftReference clock

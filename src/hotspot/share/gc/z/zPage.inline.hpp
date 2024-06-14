@@ -69,6 +69,8 @@ inline uint32_t ZPage::object_max_count() const {
     return 1;
 
   default:
+      // ZPageTypeSmall 中最大能容纳的对象个数为 2M / 8B = 262144
+      // ZPageTypeMedium 中最大能容纳的对象个数为 32M / 4K = 8192
     return (uint32_t)(size() >> object_alignment_shift());
   }
 }
@@ -76,13 +78,16 @@ inline uint32_t ZPage::object_max_count() const {
 inline size_t ZPage::object_alignment_shift() const {
   switch (type()) {
   case ZPageTypeSmall:
+      // 8B
     return ZObjectAlignmentSmallShift;
 
   case ZPageTypeMedium:
+      // 4K
     return ZObjectAlignmentMediumShift;
 
   default:
     assert(type() == ZPageTypeLarge, "Invalid page type");
+    // 2M
     return ZObjectAlignmentLargeShift;
   }
 }

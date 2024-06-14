@@ -154,7 +154,7 @@ inline oop ZBarrier::barrier(volatile oop* p, oop o) {
 
   return ZOop::from_address(good_addr);
 }
-
+// should_discover 中被调用
 template <ZBarrierFastPath fast_path, ZBarrierSlowPath slow_path>
 inline oop ZBarrier::weak_barrier(volatile oop* p, oop o) {
   const uintptr_t addr = ZOop::to_address(o);
@@ -172,6 +172,8 @@ inline oop ZBarrier::weak_barrier(volatile oop* p, oop o) {
   if (p != NULL) {
     // The slow path returns a good/marked address or null, but we never mark
     // oops in a weak load barrier so we always heal with the remapped address.
+    // 指针替换为 remapped + mark0 也就是 weakgood 视图，用于表示引用类型被标记
+    // 视图为 final 只是表示该对象只能通过 finalise 方法访问，已经到了最后回收阶段了
     self_heal<fast_path>(p, addr, ZAddress::remapped_or_null(good_addr));
   }
 

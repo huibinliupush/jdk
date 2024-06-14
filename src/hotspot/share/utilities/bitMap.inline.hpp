@@ -64,12 +64,18 @@ inline bool BitMap::par_at(idx_t index, atomic_memory_order memory_order) const 
 
 inline bool BitMap::par_set_bit(idx_t bit, atomic_memory_order memory_order) {
   verify_index(bit);
+  // 获取对应在 bitmap 的 word
   volatile bm_word_t* const addr = word_addr(bit);
+  // 获取 bit 在 word 中的位置
   const bm_word_t mask = bit_mask(bit);
+  // 加载 bit 对应的 word
   bm_word_t old_val = load_word_ordered(addr, memory_order);
 
   do {
+      // bm_word_t & mask 就是获取 bit 在 word 中的值， 0 或者 1
+      // bm_word_t | mask 就是设置 bit 在 word 中的值，设置为 1
     const bm_word_t new_val = old_val | mask;
+    // 只要原来被标记位那么肯定都为  1
     if (new_val == old_val) {
       return false;     // Someone else beat us to it.
     }

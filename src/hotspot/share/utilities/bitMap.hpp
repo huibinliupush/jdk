@@ -113,10 +113,13 @@ class BitMap {
  protected:
   // Return the position of bit within the word that contains it (e.g., if
   // bitmap words are 32 bits, return a number 0 <= n <= 31).
+  // 获取 bit 在 word 中的位置
   static idx_t bit_in_word(idx_t bit) { return bit & (BitsPerWord - 1); }
 
   // Return a mask that will select the specified bit, when applied to the word
   // containing the bit.
+  // 通过 bit_mask 获取 bit word 中的值： bm_word_t & bit_mask
+  // 如果需要标记 bitmap 中的值，那么就 bm_word_t | bit_mask ,原来被标记过了那么肯定还是1
   static bm_word_t bit_mask(idx_t bit) { return (bm_word_t)1 << bit_in_word(bit); }
 
   // Return the bit number of the first bit in the specified word.

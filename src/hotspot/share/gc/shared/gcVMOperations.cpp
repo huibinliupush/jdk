@@ -109,7 +109,7 @@ bool VM_GC_Operation::doit_prologue() {
               byte_size_in_proper_unit(NewSize),
               proper_unit_for_byte_size(NewSize)));
   }
-
+  // Heap_lock->lock()
   VM_GC_Sync_Operation::doit_prologue();
 
   // Check invocations
@@ -129,8 +129,10 @@ void VM_GC_Operation::doit_epilogue() {
   // during the GC thread root traversal.
   OopMapCache::cleanup_old_entries();
   if (Universe::has_reference_pending_list()) {
+    // 通知 cleaner thread 执行 cleaner,release native memory
     Heap_lock->notify_all();
   }
+  // Heap_lock->unlock()
   VM_GC_Sync_Operation::doit_epilogue();
 }
 

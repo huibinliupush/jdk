@@ -160,6 +160,7 @@ bool ZMarkThreadLocalStacks::push_slow(ZMarkStackAllocator* allocator,
     }
 
     // Publish/Overflow and uninstall stack
+    // 如果本地标记栈满了，就将标记栈转移到标记条带中
     stripe->publish_stack(stack, publish);
     *stackp = stack = NULL;
   }

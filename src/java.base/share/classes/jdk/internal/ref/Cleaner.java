@@ -95,6 +95,7 @@ public class Cleaner
             if (cl.next != null)
                 first = cl.next;
             else
+                // first 置为 null,当 cl 是头结点的时候，它的 prev 指针指向 null
                 first = cl.prev;
         }
         if (cl.next != null)

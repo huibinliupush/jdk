@@ -96,6 +96,7 @@ void ShenandoahControlThread::run_service() {
   ShenandoahHeuristics* heuristics = heap->heuristics();
   while (!in_graceful_shutdown() && !should_terminate()) {
     // Figure out if we have pending requests.
+    // 定时循环，间隔为 ShenandoahControlInterval （通过一定的适应算法计算每次合理的间隔时间）
     bool alloc_failure_pending = _alloc_failure_gc.is_set();
     bool explicit_gc_requested = _gc_requested.is_set() &&  is_explicit_gc(_requested_gc_cause);
     bool implicit_gc_requested = _gc_requested.is_set() && !is_explicit_gc(_requested_gc_cause);

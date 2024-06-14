@@ -651,23 +651,29 @@ void FieldLayoutBuilder::epilogue() {
 
   OopMapBlocksBuilder* nonstatic_oop_maps =
       new OopMapBlocksBuilder(max_oop_map_count);
+  // 继承父类的 nonstatic_oop_maps
   if (super_oop_map_count > 0) {
     nonstatic_oop_maps->initialize_inherited_blocks(_super_klass->start_of_nonstatic_oop_maps(),
     _super_klass->nonstatic_oop_map_count());
   }
 
+  // 为非静态成员变量构建 nonstatic_oop_maps
   if (_root_group->oop_fields() != NULL) {
     for (int i = 0; i < _root_group->oop_fields()->length(); i++) {
       LayoutRawBlock* b = _root_group->oop_fields()->at(i);
+      // 构建 OopMapBlock
       nonstatic_oop_maps->add(b->offset(), 1);
     }
   }
 
+  // 为 @Contended 标注的非静态成员变量构建 nonstatic_oop_maps
+  // 在静态成员变量上标注 @Contended 将会被忽略
   if (!_contended_groups.is_empty()) {
     for (int i = 0; i < _contended_groups.length(); i++) {
       FieldGroup* cg = _contended_groups.at(i);
       if (cg->oop_count() > 0) {
         assert(cg->oop_fields() != NULL && cg->oop_fields()->at(0) != NULL, "oop_count > 0 but no oop fields found");
+        // 构建 OopMapBlock，同一个 contended_groups 的成员变量在内存中要放在一起
         nonstatic_oop_maps->add(cg->oop_fields()->at(0)->offset(), cg->oop_count());
       }
     }

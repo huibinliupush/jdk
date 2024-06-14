@@ -462,6 +462,8 @@ public class FileChannelImpl
             if (!isOpen())
                 return;
             do {
+                // metaData = true  调用 fsync
+                // metaData = false 调用 fdatasync
                 rv = nd.force(fd, metaData);
             } while ((rv == IOStatus.INTERRUPTED) && isOpen());
         } finally {
@@ -870,10 +872,14 @@ public class FileChannelImpl
         // may be required to close file
         private static final NativeDispatcher nd = new FileDispatcherImpl();
 
+        // 通过 mmap 系统调用在进程地址空间中映射出来的虚拟内存区域的起始地址
         private volatile long address;
+        // mmap 映射出来的虚拟内存区域大小
         protected final long size;
+        // MappedByteBuffer 的容量 cap （由 FileChannel#map 参数 size 指定）
         protected final long cap;
         private final FileDescriptor fd;
+        // 我们指定的 position 距离其所在文件页起始位置的距离。
         private final int pagePosition;
 
         private Unmapper(long address, long size, long cap,
@@ -926,12 +932,16 @@ public class FileChannelImpl
     private static class DefaultUnmapper extends Unmapper {
 
         // keep track of non-sync mapped buffer usage
+        // jvm 调用 mmap 进行内存文件映射的总次数
         static volatile int count;
+        // jvm 在进程地址空间中映射出来的虚拟内存总大小（内核角度的虚拟内存占用）
         static volatile long totalSize;
+        // jvm 所占用的 MappedByteBuffer 总大小（jvm角度的虚拟内存占用）
         static volatile long totalCapacity;
 
         public DefaultUnmapper(long address, long size, long cap,
                                FileDescriptor fd, int pagePosition) {
+            // 封装映射出来的虚拟内存区域 MappedByteBuffer 相关信息，比如，起始映射地址，映射长度 等等
             super(address, size, cap, fd, pagePosition);
             incrementStats();
         }
@@ -1001,11 +1011,22 @@ public class FileChannelImpl
     private static final int MAP_PV = 2;
 
     public MappedByteBuffer map(MapMode mode, long position, long size) throws IOException {
+        // 映射长度不能超过 Integer.MAX_VALUE，最大映射 2G 大小的内存
         if (size > Integer.MAX_VALUE)
             throw new IllegalArgumentException("Size exceeds Integer.MAX_VALUE");
+        // 当 MapMode 设置了 READ_WRITE_SYNC 或者 READ_ONLY_SYNC（这两个标志只适用于共享映射，不能用于私有映射），isSync 会为 true
+        // isSync = true 表示 MappedByteBuffer 背后直接映射的是 non-volatile memory 而不是普通磁盘上的文件
+        // isSync = true 提供的语义当 MappedByteBuffer 在 force 回写数据的时候是通过 CPU 指令完成的而不是 msync 系统调用
+        // 并且可以保证在文件映射区 MappedByteBuffer 进行写入之前，文件的 metadata 已经被刷新，文件始终处于一致性的状态
+        // isSync 的开启需要依赖底层 CPU 硬件体系架构的支持
         boolean isSync = isSync(Objects.requireNonNull(mode, "Mode is null"));
+        // MapMode 转换成相关 prot 常量
         int prot = toProt(mode);
+        // 进行内存映射，映射成功之后，相关映射区的信息，比如映射起始地址，映射长度，映射文件等等会封装在 Unmapper 里返回
+        // MappedByteBuffer 的释放也封装在 Unmapper中
         Unmapper unmapper = mapInternal(mode, position, size, prot, isSync);
+        // 根据 Unmapper 中的信息创建  MappedByteBuffer
+        // 当映射 size 指定为 0 时，unmapper = null，随后会返回一个空的 MappedByteBuffer
         if (unmapper == null) {
             // a valid file descriptor is not required
             FileDescriptor dummy = new FileDescriptor();
@@ -1032,10 +1053,12 @@ public class FileChannelImpl
         return mapInternal(mode, position, size, prot, isSync);
     }
 
-    private Unmapper mapInternal(MapMode mode, long position, long size, int prot, boolean isSync)
+    private Unmapper    mapInternal(MapMode mode, long position, long size, int prot, boolean isSync)
         throws IOException
     {
+        // 确保文件处于 open 状态
         ensureOpen();
+        // 对相关映射参数进行校验
         if (mode == null)
             throw new NullPointerException("Mode is null");
         if (position < 0L)
@@ -1044,26 +1067,37 @@ public class FileChannelImpl
             throw new IllegalArgumentException("Negative size");
         if (position + size < 0)
             throw new IllegalArgumentException("Position + size overflow");
-
+        // 如果 mode 设置了 READ_ONLY，但文件并没有以读的模式打开，则会抛出 NonReadableChannelExceptio
+        // 如果 mode 设置了 READ_WRITE 或者 PRIVATE ，那么文件必须要以读写的模式打开，否则会抛出 NonWritableChannelException
+        // 如果 isSync 为 true，但是对应 CPU 体系架构不支持 cache line write back 指令，那么就会抛出 UnsupportedOperationException
         checkMode(mode, prot, isSync);
         long addr = -1;
         int ti = -1;
         try {
+            // 这里不要被命名误导，beginBlocking 并不会阻塞当前线程，只是标记一下表示当前线程下面会执行一个 IO 操作可能会无限期阻塞
+            // 而这个 IO 操作是可以被中断的，这里会设置中断的回调函数 interruptor，在线程被中断的时候回调
             beginBlocking();
+            // threads 是一个 NativeThread 的集合，用于暂存阻塞在该 channel 上的 NativeThread，用于后续统一唤醒
             ti = threads.add();
+            // 如果当前 channel 已经关闭，则不能进行 mmap 操作
             if (!isOpen())
                 return null;
-
+            // 映射文件大小，同 mmap 系统调用中的 length 参数
             long mapSize;
+            // position 距离其所在文件页起始位置的距离,OS 内核以 page 为单位进行内存管理
+            // 内存映射的单位也应该按照 page 进行，pagePosition 用于后续将 position,size 与 page 大小对齐
             int pagePosition;
+            // 确保线程串行操作文件的 position
             synchronized (positionLock) {
                 long filesize;
                 do {
+                    // 底层通过 fstat 系统调用获取文件大小
                     filesize = nd.size(fd);
+                    // 如果系统调用被中断则一直重试
                 } while ((filesize == IOStatus.INTERRUPTED) && isOpen());
                 if (!isOpen())
                     return null;
-
+                // 如果要映射的文件区域已经超过了 filesize 则需要扩展文件
                 if (filesize < position + size) { // Extend file size
                     if (!writable) {
                         throw new IOException("Channel not open for writing " +
@@ -1071,32 +1105,48 @@ public class FileChannelImpl
                     }
                     int rv;
                     do {
+                        // 底层通过 ftruncate 系统调用将文件大小扩展至 （position + size）
                         rv = nd.truncate(fd, position + size);
                     } while ((rv == IOStatus.INTERRUPTED) && isOpen());
                     if (!isOpen())
                         return null;
                 }
-
+                // 映射大小为 0 则直接返回 null，随后会创建一个空的 MappedByteBuffer
                 if (size == 0) {
                     return null;
                 }
-
+                // OS 内核是按照内存页 page 为单位来对内存进行管理的，因此我们内存映射的粒度也应该按照 page 的单位进行
+                // allocationGranularity 表示内存分配的粒度，这里是内存页的大小 4K
+                // 我们指定的映射 offset 也就是这里的 position 应该是与 4K 对齐的，同理映射长度 size 也应该与 4K 对齐
+                // 指定 position 距离其所在文件页起始位置的距离
                 pagePosition = (int)(position % allocationGranularity);
+                // mapPosition 为映射的文件内容在磁盘文件中的偏移，同 mmap 系统调用中的 offset 参数
+                // 这里的 mapPosition 为 position 所属文件页的起始位置
                 long mapPosition = position - pagePosition;
+                // 映射位置 mapPosition 减去了 pagePosition，所以这里的映射长度 mapSize 需要把 pagePosition 加回来
                 mapSize = size + pagePosition;
                 try {
                     // If map0 did not throw an exception, the address is valid
+                    // native 方法，底层调用 mmap 进行内存文件映射，返回值 addr 为 mmap 系统调用在进程地址空间真实映射出来的虚拟内存区域起始地址
                     addr = map0(prot, mapPosition, mapSize, isSync);
                 } catch (OutOfMemoryError x) {
                     // An OutOfMemoryError may indicate that we've exhausted
                     // memory so force gc and re-attempt map
+                    // 如果内存不足导致 mmap 失败，这里触发 Full GC 进行内存回收，前提是没有设置 -XX:+DisableExplicitGC
+                    // 默认情况下在调用 System.gc() 之后，JVM 马上会执行 Full GC，并且等到 Full GC 完成之后才返回的。
+                    // 只有使用 CMS ， G1， Shenandoah 时，并且配置 -XX:+ExplicitGCInvokesConcurrent 的情况下
+                    // 调用 System.gc() 会触发 Concurrent Full GC，java 线程在触发了 Concurrent Full GC 之后立马返回
                     System.gc();
                     try {
+                        // see https://stackoverflow.com/questions/77941747/why-do-we-need-thread-sleep-after-calling-system-gc-in-jdk-native-memory-usage-s/77943108#77943108
+                        // 这里不是等待 gc 结束，而是等待 cleaner thread 运行 directBuffer 的 cleaner,在 cleaner 中释放 native memory
+                        // 等待 cleaner 释放 native memory
                         Thread.sleep(100);
                     } catch (InterruptedException y) {
                         Thread.currentThread().interrupt();
                     }
                     try {
+                        // 重新进行内存映射
                         addr = map0(prot, mapPosition, mapSize, isSync);
                     } catch (OutOfMemoryError y) {
                         // After a second OOME, fail
@@ -1114,15 +1164,21 @@ public class FileChannelImpl
                 unmap0(addr, mapSize);
                 throw ioe;
             }
-
+            // 检查 mmap 调用是否成功，失败的话错误信息会放在 addr 中
             assert (IOStatus.checkAll(addr));
+            // addr 需要与文件页尺寸对齐
             assert (addr % allocationGranularity == 0);
+            // Unmapper 用于调用 unmmap 释放映射出来的虚拟内存以及物理内存
+            // 并统计整个 JVM 进程调用 mmap 的总次数以及映射的内存总大小
+            // 本次 mmap 映射出来的内存区域信息都会封装在 Unmapper 中
             Unmapper um = (isSync
                            ? new SyncUnmapper(addr, mapSize, size, mfd, pagePosition)
                            : new DefaultUnmapper(addr, mapSize, size, mfd, pagePosition));
             return um;
         } finally {
+            // IO 操作完毕，从 threads 集合中删除当前线程
             threads.remove(ti);
+            // IO 操作完毕,清空线程的中断回调函数，如果此时线程已被中断则抛出 closedByInterruptException 异常
             endBlocking(IOStatus.checkAll(addr));
         }
     }
@@ -1138,14 +1194,19 @@ public class FileChannelImpl
     private int toProt(MapMode mode) {
         int prot;
         if (mode == MapMode.READ_ONLY) {
+            // 共享只读
             prot = MAP_RO;
         } else if (mode == MapMode.READ_WRITE) {
+            // 共享读写
             prot = MAP_RW;
         } else if (mode == MapMode.PRIVATE) {
+            // 私有读写
             prot = MAP_PV;
         } else if (mode == ExtendedMapMode.READ_ONLY_SYNC) {
+            // 共享 non-volatile memory 只读
             prot = MAP_RO;
         } else if (mode == ExtendedMapMode.READ_WRITE_SYNC) {
+            // 共享 non-volatile memory 读写
             prot = MAP_RW;
         } else {
             prot = MAP_INVALID;

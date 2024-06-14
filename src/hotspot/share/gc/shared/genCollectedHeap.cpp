@@ -855,7 +855,7 @@ void GenCollectedHeap::collect(GCCause::Cause cause) {
   if (cause == GCCause::_scavenge_alot) {
     // Young collection only.
     collect(cause, YoungGen);
-  } else {
+  } else {`
     // Stop-the-world full collection.
     collect(cause, OldGen);
   }

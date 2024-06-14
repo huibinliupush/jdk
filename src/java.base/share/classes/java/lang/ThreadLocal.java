@@ -512,6 +512,10 @@ public class ThreadLocal<T> {
                  e != null;
                  e = tab[i = nextIndex(i, len)]) {
                 if (e.refersTo(key)) {
+                    // reference 的 clear 方法或者 enqueue 方法如果在应用线程中被调用之后
+                    // 那么 JVM 在 gc 的过程中就不处理了，在 mark 阶段不会放入 discover_list 中
+                    // 因为应用线程既然已经处理了，JVM 就没必要在重复处理
+                    // 这里 threadlocal 对象以及 entry 对象，value 对象都会在同一轮 gc 中被回收
                     e.clear();
                     expungeStaleEntry(i);
                     return;
@@ -621,7 +625,7 @@ public class ThreadLocal<T> {
                     e.value = null;
                     tab[i] = null;
                     size--;
-                } else {
+                } else { // rehash 重新调整 entry 的位置
                     int h = k.threadLocalHashCode & (len - 1);
                     if (h != i) {
                         tab[i] = null;

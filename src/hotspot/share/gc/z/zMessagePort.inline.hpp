@@ -89,6 +89,7 @@ inline void ZMessagePort<T>::send_sync(const T& message) {
     MonitorLocker ml(&_monitor, Monitor::_no_safepoint_check_flag);
     request.initialize(message, _seqnum);
     _queue.insert_last(&request);
+    // 唤醒 zdriver 线程
     ml.notify();
   }
 

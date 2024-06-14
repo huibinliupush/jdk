@@ -45,6 +45,9 @@ inline int InstanceKlass::itable_offset_in_words() const { return start_of_itabl
 
 inline oop InstanceKlass::static_field_base_raw() { return java_mirror(); }
 
+// https://zhuanlan.zhihu.com/p/34961967
+// 跳过 InstanceKlass 对象中的 vtable 和 itable，之后就是 nonstatic_oop_maps 的起始地址
+// instance_klass对象的布局见 ClassFileParser::fill_instance_klass 函数
 inline OopMapBlock* InstanceKlass::start_of_nonstatic_oop_maps() const {
   return (OopMapBlock*)(start_of_itable() + itable_length());
 }
@@ -84,10 +87,13 @@ inline void InstanceKlass::release_set_methods_jmethod_ids(jmethodID* jmeths) {
 
 template <typename T, class OopClosureType>
 ALWAYSINLINE void InstanceKlass::oop_oop_iterate_oop_map(OopMapBlock* map, oop obj, OopClosureType* closure) {
+    // 获取成员变量在 oop 中的指针
   T* p         = (T*)obj->obj_field_addr<T>(map->offset());
+  // 获取该 OopMapBlock 所映射的成员变量个数
   T* const end = p + map->count();
 
   for (; p < end; ++p) {
+      // 标记成员变量
     Devirtualizer::do_oop(closure, p);
   }
 }
@@ -128,10 +134,16 @@ ALWAYSINLINE void InstanceKlass::oop_oop_iterate_oop_map_bounded(OopMapBlock* ma
 
 template <typename T, class OopClosureType>
 ALWAYSINLINE void InstanceKlass::oop_oop_iterate_oop_maps(oop obj, OopClosureType* closure) {
+    // InstanceKlass 中有多个 OopMapBlock，它们在 InstanceKlass 实例内存中会放在一起
+    // 获取首个 OopMapBlock 地址
   OopMapBlock* map           = start_of_nonstatic_oop_maps();
+  // 获取 InstanceKlass 中包含的 OopMapBlock 个数，这些都是在类加载的时候决定的
+  // class 文件中有字段表，在类加载的时候可以根据字段表建立 OopMapBlock
   OopMapBlock* const end_map = map + nonstatic_oop_map_count();
-
+  // 挨个遍历 InstanceKlass 中所有的 OopMapBlock
   for (; map < end_map; ++map) {
+      // OopMapBlock 中包含的是 java 类中非静态成员变脸在对象地址中的偏移
+      // 直接可以获取到成员变量的指针
     oop_oop_iterate_oop_map<T>(map, obj, closure);
   }
 }

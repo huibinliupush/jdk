@@ -174,8 +174,10 @@ inline void ZMarkStripe::publish_stack(ZMarkStack* stack, bool publish) {
   // contention between mutators and GC workers as much as possible, while
   // still allowing GC workers to help out and steal work from each other.
   if (publish) {
+      // 应用线程收集到的标记任务，会被添加到 _published 链表中
     _published.push(stack);
   } else {
+      // 本地标记栈满了，就会将标记任务添加到 _overflowed 链表中
     _overflowed.push(stack);
   }
 }
@@ -259,7 +261,7 @@ inline bool ZMarkThreadLocalStacks::pop(ZMarkStackAllocator* allocator,
   if (stack != NULL && stack->pop(entry)) {
     return true;
   }
-
+  // 本地标记栈中的人物执行完之后，则从标记条带 stripe 中去窃取任务执行
   return pop_slow(allocator, stripe, stackp, entry);
 }
 

@@ -63,12 +63,16 @@ static inline oop load_referent(oop obj, ReferenceType type) {
 
 template <typename T, class OopClosureType>
 bool InstanceRefKlass::try_discover(oop obj, ReferenceType type, OopClosureType* closure) {
+    // ZHeap::heap()->reference_discoverer()
+    //  ZHeap -> ZReferenceProcessor _reference_processor
   ReferenceDiscoverer* rd = closure->ref_discoverer();
   if (rd != NULL) {
+      // 从堆中加载 Reference 对象的 referent
     oop referent = load_referent(obj, type);
     if (referent != NULL) {
       if (!referent->is_gc_marked()) {
         // Only try to discover if not yet marked.
+        // true 表示 reference 被加入到 discover-list 中了
         return rd->discover_reference(obj, type);
       }
     }
@@ -80,11 +84,17 @@ template <typename T, class OopClosureType, class Contains>
 void InstanceRefKlass::oop_oop_iterate_discovery(oop obj, ReferenceType type, OopClosureType* closure, Contains& contains) {
   // Try to discover reference and return if it succeeds.
   if (try_discover<T>(obj, type, closure)) {
+      // reference 被加入到 discover-list 中了（referent 不活跃 或者 reference已经被添加过了）
     return;
   }
 
   // Treat referent and discovered as normal oops.
+  // contains - > AlwaysContains -> 始终返回 true
+  // Contains -> true ，那么标记 referent 的成员变量
+  // 如果对象还是活跃的，则重新标记对象
   do_referent<T>(obj, closure, contains);
+  // Contains -> true ，那么标记该 reference 在 discover list 之后的 reference 对象（后面一个，不是后面所有）
+  // 也就是 reference 的 discover 字段指向的对象
   do_discovered<T>(obj, closure, contains);
 }
 

@@ -64,9 +64,12 @@ LRUMaxHeapPolicy::LRUMaxHeapPolicy() {
 // Capture state (of-the-VM) information needed to evaluate the policy
 void LRUMaxHeapPolicy::setup() {
   size_t max_heap = MaxHeapSize;
+  // 获取最近一次 gc 之后，JVM 堆的终于最大剩余空间
   max_heap -= Universe::heap()->used_at_last_gc();
+  // 转换为 MB
   max_heap /= M;
-
+  // global.hpp  通过 -XX:SoftRefLRUPolicyMSPerMB 设置默认为 1000 ，单位毫秒
+  // 表示每 MB 的剩余内存空间允许 SoftReference 存活的最大时间
   _max_interval = max_heap * SoftRefLRUPolicyMSPerMB;
   assert(_max_interval >= 0,"Sanity check");
 }

@@ -332,8 +332,10 @@ public class WeakHashMap<K,V>
                     Entry<K,V> next = p.next;
                     if (p == e) {
                         if (prev == e)
+                            // 如果是头结点，直接重置
                             table[i] = next;
                         else
+                            // 如果在拉链中，则从链表中删除
                             prev.next = next;
                         // Must not null out e.next;
                         // stale entries may be in use by a HashIterator
@@ -455,7 +457,7 @@ public class WeakHashMap<K,V>
         int h = hash(k);
         Entry<K,V>[] tab = getTable();
         int i = indexFor(h, tab.length);
-
+        // 拉链法解决 hash 冲突，ThreadLocalMap 中是开放定址
         for (Entry<K,V> e = tab[i]; e != null; e = e.next) {
             if (h == e.hash && matchesKey(e, k)) {
                 V oldValue = e.value;
@@ -467,6 +469,7 @@ public class WeakHashMap<K,V>
 
         modCount++;
         Entry<K,V> e = tab[i];
+        // 头插
         tab[i] = new Entry<>(k, value, queue, h, e);
         if (++size >= threshold)
             resize(tab.length * 2);

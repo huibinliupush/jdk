@@ -346,12 +346,15 @@ void VMThread::wait_until_executed(VM_Operation* op) {
   {
     TraceTime timer("Installing VM operation", TRACETIME_LOG(Trace, vmthread));
     while (true) {
+      // 如果当前 vmthread 有正在执行的任务那么 _next_vm_operation != NULL，这里会返回false
       if (VMThread::vm_thread()->set_next_operation(op)) {
+        // vmthread 当前没有任务，唤醒 vmthread 运行，从 wait_for_operation 上唤醒 vmthread
         ml.notify_all();
         break;
       }
       // Wait to install this operation as the next operation in the VM Thread
       log_trace(vmthread)("A VM operation already set, waiting");
+      // 如果 vmthread 正在执行其他 vm 任务，那么 java 线程就在这里阻塞等待
       ml.wait();
     }
   }
@@ -360,8 +363,10 @@ void VMThread::wait_until_executed(VM_Operation* op) {
     TraceTime timer("Waiting for VM operation to be completed", TRACETIME_LOG(Trace, vmthread));
     // _next_vm_operation is cleared holding VMOperation_lock after it has been
     // executed. We wait until _next_vm_operation is not our op.
+    // 走到这里表示 vmthread 开始执行任务，java 线程需要在这里阻塞等待，直到任务执行完毕
     while (_next_vm_operation == op) {
       // VM Thread can process it once we unlock the mutex on wait.
+      // 任务执行完毕的时候，VM Thread 会在 wait_for_operation 中将 _next_vm_operation 清空，并 ml_op_lock.notify_all
       ml.wait();
     }
   }
@@ -411,7 +416,7 @@ void VMThread::inner_execute(VM_Operation* op) {
     }
     end_safepoint = true;
   }
-
+  // 执行任务
   evaluate_operation(_cur_vm_operation);
 
   if (end_safepoint) {
@@ -430,12 +435,16 @@ void VMThread::wait_for_operation() {
 
   // Clear previous operation.
   // On first call this clears a dummy place-holder.
+  // 走到这里表示上一个任务已经被 vmthread 执行了，设置 _next_vm_operation 为空
   _next_vm_operation = NULL;
   // Notify operation is done and notify a next operation can be installed.
+  // 通知任务已经执行完毕，将 java 线程从 wait_until_executed 方法中唤醒，此时 _next_vm_operation != op
+  // java 线程被唤醒返回
   ml_op_lock.notify_all();
 
   while (!should_terminate()) {
     self_destruct_if_needed();
+    // 有任务则继续执行
     if (_next_vm_operation != NULL) {
       return;
     }
@@ -460,6 +469,7 @@ void VMThread::wait_for_operation() {
 
     // We didn't find anything to execute, notify any waiter so they can install an op.
     ml_op_lock.notify_all();
+    // 没有任务则 vmthread 继续在这里阻塞等待，set_next_operation 方法会将 vmthread 从这里唤醒
     ml_op_lock.wait(GuaranteedSafepointInterval);
   }
 }
@@ -476,9 +486,13 @@ void VMThread::loop() {
 
   while (true) {
     if (should_terminate()) break;
+    // 当 _next_vm_operation 执行完毕的时候，流程又会回到这里，清空 _next_vm_operation
+    // 并唤醒阻塞在 wait_until_executed 的 java 线程，任务执行完毕，java 线程可以从 wait_until_executed 中返回了
+    // vmthread 继续在这里阻塞等待 _next_vm_operation，通过 set_next_operation 方法唤醒（wait_until_executed）
     wait_for_operation();
     if (should_terminate()) break;
     assert(_next_vm_operation != NULL, "Must have one");
+    // 执行 _next_vm_operation
     inner_execute(_next_vm_operation);
   }
 }

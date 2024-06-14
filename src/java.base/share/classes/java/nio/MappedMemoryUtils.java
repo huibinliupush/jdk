@@ -47,13 +47,18 @@ import java.io.UncheckedIOException;
 
     static void load(long address, boolean isSync, long size) {
         // no need to load a sync mapped buffer
+        // isSync = true 表示 MappedByteBuffer 背后直接映射的是 non-volatile memory 而不是普通磁盘上的文件
+        // MappedBuffer 背后映射的内容已经在 non-volatile memory 中了不需要 load
         if (isSync) {
             return;
         }
         if ((address == 0) || (size == 0))
             return;
+        // 返回 pagePosition
         long offset = mappingOffset(address);
+        // MappedBuffer 实际映射的内存区域大小 也就是调用 mmap 时指定的 mapSize
         long length = mappingLength(offset, size);
+        // mappingAddress 用于获取实际的映射起始位置 mapPosition
         load0(mappingAddress(address, offset), length);
 
         // Read a byte from each page to bring it into memory. A checksum
@@ -86,6 +91,7 @@ import java.io.UncheckedIOException;
             return;
         long offset = mappingOffset(address);
         long length = mappingLength(offset, size);
+        // madvise MADV_DONTNEED
         unload0(mappingAddress(address, offset), length);
     }
 
@@ -117,6 +123,7 @@ import java.io.UncheckedIOException;
     // largest page aligned address of the mapping less than or equal
     // to the start address.
     private static long mappingOffset(long address) {
+        // 返回 pagePosition
         return mappingOffset(address, 0);
     }
 
@@ -127,7 +134,10 @@ import java.io.UncheckedIOException;
     private static long mappingOffset(long address, long index) {
         int ps = Bits.pageSize();
         long indexAddress = address + index;
+        // address 与 page size 对齐后的地址
         long baseAddress = alignDown(indexAddress, ps);
+        // baseAddress 表示 address 当前所在内存页的起始地址
+        // 这里返回的正是之前介绍的 pagePosition 表示的是 address 距离其所在内存页起始位置 baseAddress 的距离
         return indexAddress - baseAddress;
     }
 

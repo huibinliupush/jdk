@@ -88,6 +88,20 @@ public abstract class MappedByteBuffer
     // MapMode.READ_ONLY_SYNC or MapMode.READ_WRITE_SYNC and false if
     // it is mapped using any of the other modes. This flag only
     // determines the behavior of force operations.
+    // https://www.kernel.org/doc/Documentation/filesystems/dax.txt
+    // https://lwn.net/Articles/731706/
+    // https://lwn.net/Articles/758594/
+    // https://github.com/golang/go/issues/44436
+    // https://pmem.io/
+    // https://nvdimm.wiki.kernel.org/
+    // https://docs.pmem.io/persistent-memory/getting-started-guide/introduction
+    // 内核源码见 - __xfs_filemap_fault
+
+    // 当 MapMode 设置了 READ_WRITE_SYNC 或者 READ_ONLY_SYNC（这两个标志只适用于共享映射，不能用于私有映射），isSync 会为 true
+    // isSync = true 表示 MappedByteBuffer 背后直接映射的是 non-volatile memory 而不是普通磁盘上的文件
+    // isSync = true 提供的语义当 MappedByteBuffer 在 force 回写数据的时候是通过 CPU 指令完成的而不是 msync 系统调用
+    // 并且可以保证在文件映射区 MappedByteBuffer 进行写入之前，文件的 metadata 已经被刷新，文件始终处于一致性的状态
+    // isSync 的开启需要依赖底层 CPU 硬件体系架构的支持
     private final boolean isSync;
 
     static final ScopedMemoryAccess SCOPED_MEMORY_ACCESS = ScopedMemoryAccess.getScopedMemoryAccess();

@@ -32,6 +32,8 @@ void InstanceRefKlass::update_nonstatic_oop_maps(Klass* k) {
   // Clear the nonstatic oop-map entries corresponding to referent
   // and discovered fields.  They are treated specially by the
   // garbage collector.
+  // Reference 类中的 referent 字段和 discovered 字段的索引偏移从 OopMapBlock 中清除掉
+  // 在后面通过 Reference 遍历标记成员变量的时候不需要遍历标记这两个字段
   InstanceKlass* ik = InstanceKlass::cast(k);
 
   // Check that we have the right class

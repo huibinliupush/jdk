@@ -371,7 +371,7 @@ void Universe::genesis(TRAPS) {
     _the_null_sentinel = OopHandle(vm_global(), tns());
   }
 
-  // Create a handle for reference_pending_list
+  // Create a handle for reference_pending_list，文件 oopHandle.inline.hpp
   _reference_pending_list = OopHandle(vm_global(), NULL);
 
   // Maybe this could be lifted up now that object array can be initialized
